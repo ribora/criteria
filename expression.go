@@ -1,4 +1,4 @@
-package expr
+package criteria
 
 import (
 	"encoding/json"
