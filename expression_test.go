@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"gitlab.com/gorib/try"
 )
 
 func TestExpression(t *testing.T) {
@@ -16,7 +14,8 @@ func TestExpression(t *testing.T) {
 			q := And()
 			compare := Or("id", "lt", 7.).Add(And("id", "eq", nil))
 			payload := []byte(`{"mode":"or","conditions":[["id","lt",7],{"mode":"and","conditions":[["id","eq",null]]}]}`)
-			try.ThrowError(json.Unmarshal(payload, &q))
+			err := json.Unmarshal(payload, &q)
+			assert.Nil(t, err)
 			assert.Equal(t, compare, q)
 		},
 	)
@@ -29,7 +28,8 @@ func TestExpression(t *testing.T) {
 				Add("field5", "json_eq", []int{7, 5, 4}).
 				Add("field6", "eq", []string{"4", "fr"}).
 				Add("f", "ne", []int{1})
-			qJson := try.Throw(json.Marshal(q))
+			qJson, err := json.Marshal(q)
+			assert.Nil(t, err)
 			assert.Equal(
 				t,
 				[]byte(`{"conditions":[["field","eq",1],{"conditions":[["field2","eq","str"],["field3","ne",null]],"mode":"or"},["field4","gt",3.14],["field5","json_eq",[7,5,4]],["field6","eq",["4","fr"]],["f","ne",[1]]],"mode":"and"}`),

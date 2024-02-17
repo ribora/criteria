@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"gitlab.com/gorib/ptr"
-	"gitlab.com/gorib/try"
 )
 
 const (
@@ -70,9 +69,11 @@ func (e *expression) UnmarshalJSON(bytes []byte) error {
 		return nil
 	}
 	data := map[string]any{}
-	try.ThrowError(json.Unmarshal(bytes, &data))
-	try.ThrowError(parser(e, data))
-	return nil
+	err := json.Unmarshal(bytes, &data)
+	if err != nil {
+		return fmt.Errorf("criteria unmarshal: %v", err)
+	}
+	return parser(e, data)
 }
 
 func (e *expression) MarshalJSON() ([]byte, error) {
