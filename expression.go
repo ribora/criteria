@@ -3,8 +3,7 @@ package criteria
 import (
 	"encoding/json"
 	"fmt"
-
-	"gitlab.com/gorib/ptr"
+	"slices"
 )
 
 const (
@@ -13,33 +12,63 @@ const (
 	AddOperationMode
 )
 
+type Strategy string
+
+func (s Strategy) IsValid() bool {
+	return slices.Contains([]Strategy{StrategyAnd, StrategyOr, ""}, s)
+}
+
 const (
-	StrategyAnd = "and"
-	StrategyOr  = "or"
+	StrategyAnd Strategy = "and"
+	StrategyOr           = "or"
 )
 
 type Expression interface {
 	Add(...any) Expression
 }
 
+type Builder interface {
+	Strategy() (Strategy, error)
+	Params() ([]any, error)
+}
+
 func And(expressions ...any) Expression {
-	return ptr.Pointer(expression{StrategyAnd, []any{}}).Add(expressions...)
+	return expr(StrategyAnd).Add(expressions...)
 }
 
 func Or(expressions ...any) Expression {
-	return ptr.Pointer(expression{StrategyOr, []any{}}).Add(expressions...)
+	return expr(StrategyOr).Add(expressions...)
 }
 
-func NewBuilder(e Expression) (string, []any) {
-	if ex, ok := e.(*expression); ok {
-		return ex.strategy, ex.parts
-	}
-	panic("unsupported object")
+func expr(strategy Strategy) *expression {
+	return &expression{strategy: strategy}
 }
 
 type expression struct {
-	strategy string
+	strategy Strategy
 	parts    []any
+	failed   error
+}
+
+func (e *expression) Strategy() (Strategy, error) {
+	if e.failed != nil {
+		return "", e.failed
+	}
+	strategy := e.strategy
+	if strategy == "" {
+		strategy = StrategyAnd
+	}
+	if !strategy.IsValid() {
+		return "", fmt.Errorf("invalid expression strategy: '%v'", e.strategy)
+	}
+	return strategy, nil
+}
+
+func (e *expression) Params() ([]any, error) {
+	if e.failed != nil {
+		return nil, e.failed
+	}
+	return e.parts, nil
 }
 
 func (e *expression) UnmarshalJSON(bytes []byte) error {
@@ -48,7 +77,7 @@ func (e *expression) UnmarshalJSON(bytes []byte) error {
 	parser = func(e *expression, data any) error {
 		if part, ok := data.(map[string]any); ok {
 			if mode, ok := part["mode"].(string); ok {
-				e.strategy = mode
+				e.strategy = Strategy(mode)
 			}
 			if part["conditions"] == nil {
 				return fmt.Errorf("condition is required but missing")
@@ -90,7 +119,7 @@ func (e *expression) Add(expressions ...any) Expression {
 	for _, p := range expressions {
 		if _, ok := p.(Expression); ok {
 			if mode == AddOperationMode {
-				panic(fmt.Errorf("cannot mix Expressions and operations"))
+				e.failed = fmt.Errorf("cannot mix Expressions and operations")
 			}
 			mode = AddExpressionMode
 		} else {
@@ -99,7 +128,7 @@ func (e *expression) Add(expressions ...any) Expression {
 	}
 	if mode == AddOperationMode {
 		if len(expressions) != 3 {
-			panic(fmt.Errorf("operations support only 3 argument"))
+			e.failed = fmt.Errorf("operations support only 3 argument")
 		}
 		expressions = []any{expressions}
 	}

@@ -9,7 +9,7 @@ import (
 
 func TestExpression(t *testing.T) {
 	t.Run(
-		"Serialize",
+		"Deserialize",
 		func(t *testing.T) {
 			q := And()
 			compare := Or("id", "lt", 7.).Add(And("id", "eq", nil))
@@ -19,6 +19,20 @@ func TestExpression(t *testing.T) {
 			assert.Equal(t, compare, q)
 		},
 	)
+
+	t.Run(
+		"DeserializeUnknownOperation",
+		func(t *testing.T) {
+			q := expression{}
+			payload := []byte(`{"mode":"prem","conditions":[["id","lt",7]]}`)
+			err := json.Unmarshal(payload, &q)
+			assert.Nil(t, err)
+			strategy, err := q.Strategy()
+			assert.EqualError(t, err, "invalid expression strategy: 'prem'")
+			assert.Equal(t, Strategy(""), strategy)
+		},
+	)
+
 	t.Run(
 		"Success",
 		func(t *testing.T) {
@@ -35,20 +49,30 @@ func TestExpression(t *testing.T) {
 				[]byte(`{"conditions":[["field","eq",1],{"conditions":[["field2","eq","str"],["field3","ne",null]],"mode":"or"},["field4","gt",3.14],["field5","json_eq",[7,5,4]],["field6","eq",["4","fr"]],["f","ne",[1]]],"mode":"and"}`),
 				qJson,
 			)
+			strategy, err := q.(Builder).Strategy()
+			assert.Nil(t, err)
+			parts, err := q.(Builder).Params()
+			assert.Nil(t, err)
+			assert.Equal(t, StrategyAnd, strategy)
+			assert.Len(t, parts, 6)
 		},
 	)
 
 	t.Run(
 		"MixedOperations",
 		func(t *testing.T) {
-			assert.PanicsWithError(t, "cannot mix Expressions and operations", func() { And("field", "eq", 17, And("field", "ne", 6)) })
+			e := And("field", "eq", 17, And("field", "ne", 6))
+			_, err := e.(Builder).Params()
+			assert.ErrorContains(t, err, "cannot mix Expressions and operations")
 		},
 	)
 
 	t.Run(
 		"WrongOperationsArgsCount",
 		func(t *testing.T) {
-			assert.PanicsWithError(t, "operations support only 3 argument", func() { And("field", "eq", 17, "fire", "ne", nil) })
+			e := And("field", "eq", 17, "fire", "ne", nil)
+			_, err := e.(Builder).Params()
+			assert.ErrorContains(t, err, "operations support only 3 argument")
 		},
 	)
 }
