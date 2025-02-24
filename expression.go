@@ -20,7 +20,7 @@ func (s Strategy) IsValid() bool {
 
 const (
 	StrategyAnd Strategy = "and"
-	StrategyOr           = "or"
+	StrategyOr  Strategy = "or"
 )
 
 type Expression interface {
