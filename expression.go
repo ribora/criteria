@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	AddNotInitialized = iota
-	AddExpressionMode
-	AddOperationMode
+	addNotInitialized = iota
+	addExpressionMode
+	addOperationMode
 )
 
 type Strategy string
@@ -38,6 +38,18 @@ func And(expressions ...any) Expression {
 
 func Or(expressions ...any) Expression {
 	return expr(StrategyOr).Add(expressions...)
+}
+
+func FromBytes(source []byte) (Expression, error) {
+	if len(source) == 0 {
+		return nil, nil
+	}
+	e := And()
+	err := json.Unmarshal(source, &e)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func expr(strategy Strategy) *expression {
@@ -115,18 +127,18 @@ func (e *expression) MarshalJSON() ([]byte, error) {
 
 func (e *expression) Add(expressions ...any) Expression {
 	// 0 — not initialized; 1 — Expression; 2 — operation
-	mode := AddNotInitialized
+	mode := addNotInitialized
 	for _, p := range expressions {
 		if _, ok := p.(Expression); ok {
-			if mode == AddOperationMode {
+			if mode == addOperationMode {
 				e.failed = fmt.Errorf("cannot mix Expressions and operations")
 			}
-			mode = AddExpressionMode
+			mode = addExpressionMode
 		} else {
-			mode = AddOperationMode
+			mode = addOperationMode
 		}
 	}
-	if mode == AddOperationMode {
+	if mode == addOperationMode {
 		if len(expressions) != 3 {
 			e.failed = fmt.Errorf("operations support only 3 argument")
 		}
