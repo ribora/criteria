@@ -3,19 +3,16 @@ package criteria
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
-)
-
-const (
-	addNotInitialized = iota
-	addExpressionMode
-	addOperationMode
 )
 
 type Strategy string
 
 func (s Strategy) IsValid() bool {
-	return slices.Contains([]Strategy{StrategyAnd, StrategyOr, ""}, s)
+	switch s {
+	case StrategyAnd, StrategyOr, "":
+		return true
+	}
+	return false
 }
 
 const (
@@ -30,6 +27,21 @@ type Expression interface {
 type Builder interface {
 	Strategy() (Strategy, error)
 	Params() ([]any, error)
+}
+
+type Condition struct {
+	Field     string
+	Operation string
+	Value     any
+}
+
+type Node struct {
+	Condition Condition
+	Nested    Expression
+}
+
+func Cond(field, operation string, value any) Condition {
+	return Condition{Field: field, Operation: operation, Value: value}
 }
 
 func And(expressions ...any) Expression {
@@ -53,6 +65,57 @@ func FromBytes(source []byte) (Expression, error) {
 		return nil, err
 	}
 	return e, nil
+}
+
+func Unpack(e Expression) (Strategy, []Node, error) {
+	if e == nil {
+		return StrategyAnd, nil, nil
+	}
+	builder, ok := e.(Builder)
+	if !ok {
+		return "", nil, fmt.Errorf("expression %T does not implement Builder", e)
+	}
+	strategy, err := builder.Strategy()
+	if err != nil {
+		return "", nil, err
+	}
+	parts, err := builder.Params()
+	if err != nil {
+		return "", nil, err
+	}
+	nodes := make([]Node, 0, len(parts))
+	for i, part := range parts {
+		if nested, ok := part.(Expression); ok {
+			nodes = append(nodes, Node{Nested: nested})
+			continue
+		}
+		condition, ok := part.([]any)
+		if !ok {
+			return "", nil, fmt.Errorf("condition %d: must be an expression or an operation, got %T", i, part)
+		}
+		if len(condition) != 3 {
+			return "", nil, fmt.Errorf("condition %d: operations support only 3 argument, got %d", i, len(condition))
+		}
+		field, ok := condition[0].(string)
+		if !ok {
+			return "", nil, fmt.Errorf("condition %d: field must be a string, got %T", i, condition[0])
+		}
+		operation, ok := condition[1].(string)
+		if !ok {
+			return "", nil, fmt.Errorf("condition %d: operation must be a string, got %T", i, condition[1])
+		}
+		nodes = append(nodes, Node{Condition: Condition{Field: field, Operation: operation, Value: condition[2]}})
+	}
+	return strategy, nodes, nil
+}
+
+func Err(e Expression) error {
+	builder, ok := e.(Builder)
+	if !ok {
+		return nil
+	}
+	_, err := builder.Params()
+	return err
 }
 
 func expr(strategy Strategy) *expression {
@@ -125,7 +188,6 @@ func (e *expression) parse(part map[string]any) error {
 			if len(c) != 3 {
 				return fmt.Errorf("condition %d: operations support only 3 argument, got %d", i, len(c))
 			}
-			// sql/where.go asserts the operation to string without checking it.
 			if _, ok := c[1].(string); !ok {
 				return fmt.Errorf("condition %d: operation must be a string, got %T", i, c[1])
 			}
@@ -146,25 +208,33 @@ func (e *expression) MarshalJSON() ([]byte, error) {
 }
 
 func (e *expression) Add(expressions ...any) Expression {
-	// 0 — not initialized; 1 — Expression; 2 — operation
-	mode := addNotInitialized
+	nodes := 0
 	for _, p := range expressions {
-		if _, ok := p.(Expression); ok {
-			if mode == addOperationMode {
-				e.failed = fmt.Errorf("cannot mix Expressions and operations")
-			}
-			mode = addExpressionMode
-		} else {
-			mode = addOperationMode
+		switch p.(type) {
+		case Expression, Condition:
+			nodes++
 		}
 	}
-	if mode == addOperationMode {
+	switch {
+	case nodes == len(expressions):
+		e.appendNodes(expressions)
+	case nodes > 0:
+		e.failed = fmt.Errorf("cannot mix Expressions and operations")
+		e.appendNodes(expressions)
+	default:
 		if len(expressions) != 3 {
 			e.failed = fmt.Errorf("operations support only 3 argument")
 		}
-		expressions = []any{expressions}
+		e.parts = append(e.parts, expressions)
 	}
-
-	e.parts = append(e.parts, expressions...)
 	return e
+}
+
+func (e *expression) appendNodes(parts []any) {
+	for _, p := range parts {
+		if c, ok := p.(Condition); ok {
+			p = []any{c.Field, c.Operation, c.Value}
+		}
+		e.parts = append(e.parts, p)
+	}
 }

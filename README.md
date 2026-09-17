@@ -1,12 +1,13 @@
 # gorib/criteria
 
-Filter expressions: `and`/`or` trees of `[field, operation, value]` triples that
-round-trip through JSON. An API accepts one from a client, `sql` turns it into a
-`WHERE` clause.
+An AST for filter expressions: `and`/`or` trees of `[field, operation, value]`
+triples that round-trip through JSON. A service accepts one from a client, and a
+backend — `sql`, an Elasticsearch builder, whatever comes next — compiles it
+into a query.
 
-The package is deliberately ignorant of SQL. It knows the shape of a filter —
-nesting, strategy, arity — and nothing about what a field or an operation means.
-That belongs to whoever consumes the tree.
+The package knows the shape of a filter: nesting, strategy, arity. It knows
+nothing about what a field or an operation *means*. That belongs to whoever
+consumes the tree.
 
 ## Building
 
@@ -17,19 +18,36 @@ q := criteria.And("status", "eq", "paid").
 ```
 
 `And` and `Or` both return an `Expression`, and `Add` accepts either three
-values — one operation — or any number of nested `Expression`s. The two cannot
-be mixed in a single `Add` call.
+values — one operation — or any number of nested `Expression`s and
+`Condition`s. A single call cannot mix the two forms.
 
 ```go
 criteria.And("id", "eq", 1, criteria.And("x", "ne", 2)) // error: cannot mix
 criteria.And("id", "eq")                                // error: 3 arguments
 ```
 
+A raw triple takes up all three argument slots, so everything else has to be
+chained on. `Cond` frees them, and the tree can be written as one:
+
+```go
+q := criteria.And(
+	criteria.Cond("status", "eq", "paid"),
+	criteria.Or(
+		criteria.Cond("channel", "eq", "web"),
+		criteria.Cond("channel", "eq", "app"),
+	),
+	criteria.Cond("total", "gt", 100),
+)
+```
+
+A `Condition` is lowered into the same triple the package stores everywhere
+else, so both forms build the same tree and encode to the same JSON — a
+`Condition` never appears in `Params()`.
+
 ## Errors arrive later
 
 `Add` returns the expression, never an error — a malformed call sets a failure
-flag on the tree instead. The flag surfaces when a consumer reads the tree
-through the `Builder` interface:
+flag on the tree instead. The flag surfaces when a consumer reads the tree:
 
 ```go
 type Builder interface {
@@ -38,10 +56,10 @@ type Builder interface {
 }
 ```
 
-Both methods return the recorded error. This keeps building fluent — an
-expression assembled across ten lines of filter mapping has no error to thread
-through — at the cost of moving the failure to the point of use. `sql` reports
-it from `Build()`.
+Both methods return the recorded error, as does `Unpack`; `criteria.Err(expr)`
+asks for it directly. This keeps building fluent — an expression assembled
+across ten lines of filter mapping has no error to thread through — at the cost
+of moving the failure to the point of use, wherever the backend compiles it.
 
 An empty strategy reads as `and`; anything other than `and` or `or` is
 `invalid expression strategy`.
@@ -63,36 +81,67 @@ this form, returning `(nil, nil)` for empty input so an absent filter parameter
 needs no special case at the call site:
 
 ```go
-expr, err := criteria.FromBytes(raw)
+expr, err := criteria.FromBytes(request.Criteria)
 if err != nil {
 	return nil, err
 }
-q := sql.Select().From(sql.Table("orders")).Where(expr) // nil = no WHERE
+return repo.List(ctx, expr) // nil expression = no filter
 ```
 
 Numbers arrive as `float64`, as they do from any `encoding/json` decode into
-`any`. Nothing converts them back — the driver binds whatever it is given.
+`any`. Nothing converts them back — the backend binds whatever it is given.
 
-## Operations
+## Reading a tree
 
-The vocabulary is the consumer's. For `sql` on pgx it is:
+A backend does not destructure the tree by hand:
 
-| Alias | SQL |
+```go
+strategy, nodes, err := criteria.Unpack(expr)
+if err != nil {
+	return err
+}
+for _, node := range nodes {
+	if node.Nested != nil {
+		// recurse into the sub-expression
+		continue
+	}
+	// node.Condition.Field, .Operation, .Value
+}
+```
+
+`Unpack` normalises the strategy, reports the deferred error, and guarantees
+the shape: three elements, a string field, a string operation. `Unpack(nil)`
+returns an empty list and no error, so an absent filter needs no special case
+at the call site.
+
+Note the asymmetry with `FromBytes`, which accepts `[5, "eq", 1]` and hands the
+field back untouched through `Params()`. The typed view is stricter because
+`Condition.Field` is a string; the untyped path is unchanged.
+
+## Operations stay opaque
+
+The operation is a string this package never interprets. That is deliberate:
+the vocabularies do not nest.
+
+| consumer | operations |
 |---|---|
-| `eq`, `in`, `=` | `=`, or `IN (…)` for a slice, or `IS NULL` for nil |
-| `ne`, `neq`, `nin`, `!=` | `!=` / `NOT IN` / `IS NOT NULL` |
-| `gt`, `ge`, `gte`, `lt`, `le`, `lte` | the corresponding comparison |
-| `between` | `BETWEEN a AND b` — the value must be a two-element slice |
-| `like`, `ilike` | pattern match |
-| `json_in` (`@>`), `json_eq` (`?`) | JSONB containment and key existence |
+| `sql` constructors | `eq`, `ne`, `gt`, `ge`, `lt`, `le`, `between`, `like`, `ilike`, `json_in`, `json_eq` |
+| `sql` drivers | `=`, `in`, `!=`, `not in`, `between`, the JSONB key operators |
+| an Elasticsearch builder | `eq`, `ne`, `in`, `nin`, `exists`, `missing` |
 
-An unknown alias is an error from the driver, not from this package. Field
-names are sanitized by `sql` (camelCase to snake_case, injection characters
-rejected), also not here.
+`exists` means nothing in SQL, `between` means nothing in Elasticsearch, and
+`nin` and `not in` are the same thing under two names. An enum here would be
+the union of every backend, with each backend rejecting most of it. Negation is
+the same story: `must_not` is an Elasticsearch idea, not a filter one.
+
+Each consumer documents its own vocabulary, rejects what it does not know, and
+handles field naming and escaping itself.
 
 ## What it does not do
 
-- No validation of fields, operations or value types.
+- No validation of what a field, operation or value *means*. `Unpack` checks
+  that a field and an operation are strings; nothing checks that they exist or
+  suit each other.
 - No evaluation — nothing here can test a struct against an expression.
 - Not concurrency-safe: build a tree in one goroutine, then treat it as
   read-only.

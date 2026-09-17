@@ -409,6 +409,7 @@ func TestFromBytesNeverPanics(t *testing.T) {
 		}
 		require.NotNil(t, e, "%s", source)
 		checkShape(t, e)
+		checkUnpack(t, e)
 	}
 }
 
@@ -426,6 +427,7 @@ func TestFromBytesNeverPanicsOnArbitraryBytes(t *testing.T) {
 		}
 		if e != nil {
 			checkShape(t, e)
+			checkUnpack(t, e)
 		}
 	}
 }
@@ -463,6 +465,7 @@ func FuzzFromBytes(f *testing.F) {
 				return
 			}
 			checkShape(t, e)
+			checkUnpack(t, e)
 
 			// A parsed tree must survive a round trip through its own encoding.
 			source, err = json.Marshal(e)
@@ -474,6 +477,7 @@ func FuzzFromBytes(f *testing.F) {
 				t.Fatalf("re-parsing %q failed: %v", source, err)
 			}
 			checkShape(t, again)
+			checkUnpack(t, again)
 		},
 	)
 }
