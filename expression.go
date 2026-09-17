@@ -44,9 +44,12 @@ func FromBytes(source []byte) (Expression, error) {
 	if len(source) == 0 {
 		return nil, nil
 	}
-	e := And()
-	err := json.Unmarshal(source, &e)
+	e := expr(StrategyAnd)
+	err := json.Unmarshal(source, e)
 	if err != nil {
+		return nil, err
+	}
+	if _, err = e.Params(); err != nil {
 		return nil, err
 	}
 	return e, nil
@@ -84,37 +87,54 @@ func (e *expression) Params() ([]any, error) {
 }
 
 func (e *expression) UnmarshalJSON(bytes []byte) error {
-	e.parts = []any{}
-	var parser func(*expression, any) error
-	parser = func(e *expression, data any) error {
-		if part, ok := data.(map[string]any); ok {
-			if mode, ok := part["mode"].(string); ok {
-				e.strategy = Strategy(mode)
-			}
-			if part["conditions"] == nil {
-				return fmt.Errorf("condition is required but missing")
-			}
-			for _, condition := range part["conditions"].([]any) {
-				if _, ok := condition.(map[string]any); ok {
-					nested := &expression{}
-					err := parser(nested, condition)
-					if err != nil {
-						return err
-					}
-					e.Add(nested)
-				} else {
-					e.Add(condition.([]any)...)
-				}
-			}
-		}
-		return nil
-	}
 	data := map[string]any{}
 	err := json.Unmarshal(bytes, &data)
 	if err != nil {
 		return fmt.Errorf("criteria unmarshal: %v", err)
 	}
-	return parser(e, data)
+	return e.parse(data)
+}
+
+func (e *expression) parse(part map[string]any) error {
+	// Nil parts would marshal back to "conditions":null, which parse rejects.
+	e.parts = []any{}
+	if mode, ok := part["mode"]; ok && mode != nil {
+		strategy, ok := mode.(string)
+		if !ok {
+			return fmt.Errorf("mode must be a string, got %T", mode)
+		}
+		e.strategy = Strategy(strategy)
+	}
+	if part["conditions"] == nil {
+		return fmt.Errorf("condition is required but missing")
+	}
+	conditions, ok := part["conditions"].([]any)
+	if !ok {
+		return fmt.Errorf("conditions must be an array, got %T", part["conditions"])
+	}
+	for i, condition := range conditions {
+		switch c := condition.(type) {
+		case map[string]any:
+			nested := &expression{}
+			err := nested.parse(c)
+			if err != nil {
+				return fmt.Errorf("condition %d: %w", i, err)
+			}
+			e.Add(nested)
+		case []any:
+			if len(c) != 3 {
+				return fmt.Errorf("condition %d: operations support only 3 argument, got %d", i, len(c))
+			}
+			// sql/where.go asserts the operation to string without checking it.
+			if _, ok := c[1].(string); !ok {
+				return fmt.Errorf("condition %d: operation must be a string, got %T", i, c[1])
+			}
+			e.Add(c...)
+		default:
+			return fmt.Errorf("condition %d: must be an object or an array, got %T", i, condition)
+		}
+	}
+	return nil
 }
 
 func (e *expression) MarshalJSON() ([]byte, error) {
