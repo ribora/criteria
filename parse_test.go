@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// checkShape asserts the contract sql/where.go relies on: a part is either a
-// nested Expression or a 3-element []any whose operation is a string.
+// checkShape asserts what Params() guarantees an untyped consumer: a part is
+// either a nested Expression or a 3-element []any whose operation is a string.
 func checkShape(t *testing.T, e Expression) {
 	t.Helper()
 	b, ok := e.(Builder)
