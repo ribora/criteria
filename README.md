@@ -2,8 +2,7 @@
 
 An AST for filter expressions: `and`/`or` trees of `[field, operation, value]`
 triples that round-trip through JSON. A service accepts one from a client, and a
-backend — `sql`, an Elasticsearch builder, whatever comes next — compiles it
-into a query.
+backend — `sql`, say, or one for Elasticsearch — compiles it into a query.
 
 The package knows the shape of a filter: nesting, strategy, arity. It knows
 nothing about what a field or an operation *means*. That belongs to whoever
@@ -127,7 +126,7 @@ the vocabularies do not nest.
 |---|---|
 | `sql` constructors | `eq`, `ne`, `gt`, `ge`, `lt`, `le`, `between`, `like`, `ilike`, `json_in`, `json_eq` |
 | `sql` drivers | `=`, `in`, `!=`, `not in`, `between`, the JSONB key operators |
-| an Elasticsearch builder | `eq`, `ne`, `in`, `nin`, `exists`, `missing` |
+| an Elasticsearch backend (illustrative) | `eq`, `ne`, `in`, `nin`, `exists`, `missing` |
 
 `exists` means nothing in SQL, `between` means nothing in Elasticsearch, and
 `nin` and `not in` are the same thing under two names. An enum here would be
