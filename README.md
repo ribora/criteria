@@ -1,4 +1,4 @@
-# gorib/criteria
+# ribora/criteria
 
 An AST for filter expressions: `and`/`or` trees of `[field, operation, value]`
 triples that round-trip through JSON. A service accepts one from a client, and a

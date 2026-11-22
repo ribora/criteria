@@ -1,4 +1,4 @@
-module gitlab.com/gorib/criteria
+module github.com/ribora/criteria
 
 go 1.18.0
 
